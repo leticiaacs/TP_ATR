@@ -3,6 +3,31 @@
 //ALINHADO COM O TEMPO DE PERIODICIDADE PARA CADA TAREFA PRODUTORA, PARA QUE OS CONSUMIDORES NAO PEGUEM 
 //INFORMACOES DESATUALIZADAS.
 
+/*Cada variável terá um ID: 
+i_posicao_x - 0
+i_posicao_y - 1
+i_angulo_x - 2
+i_temperatura - 3
+o_aceleracao - 4
+o_direcao - 5
+c_acelera - 6
+c_direita - 7
+c_esquerda - 8
+
+i_falha_eletrica - 9
+i_falha_hidraulica - 10
+e_defeito - 11
+e_automatico - 12
+c_automatico - 13
+c_man - 14
+c_rearme - 15
+
+*/
+
+//CRIAR UM BUFFER NO MAIN
+
+//PASSAR COMO PARÂMETRO NAS OUTRAS FUNÇÕES ID_SENSOR.
+
 #include "buffer.h"
 #include <iostream>
 
@@ -40,7 +65,7 @@ void Buffer_Circular::produtor_i(int i, int id_var) {
     posicoes_cheias_i[id_var]->release();  
 }
 
-void Buffer_Circular::consumidor_i(int id_var) {
+bool Buffer_Circular::consumidor_i(int id_var) {
     int item;
     posicoes_cheias_i[id_var]->acquire();
     mtx_i[id_var]->lock();
@@ -48,6 +73,7 @@ void Buffer_Circular::consumidor_i(int id_var) {
     mtx_i[id_var]->unlock();
     std::cout << "\t\tConsumer consumed " << item << std::endl;
     posicoes_vazias_i[id_var]->release();
+    return item;
 }
 
 void Buffer_Circular::produz_b(bool i, int id_var) {
@@ -71,7 +97,7 @@ void Buffer_Circular::produtor_b(bool i, int id_var) {
     posicoes_cheias_b[id_var-N_VAR_I]->release();  
 }
 
-void Buffer_Circular::consumidor_b(int id_var) {
+bool Buffer_Circular::consumidor_b(int id_var) {
     bool item;
     posicoes_cheias_b[id_var-N_VAR_I]->acquire();
     mtx_b[id_var-N_VAR_I]->lock();
@@ -79,11 +105,8 @@ void Buffer_Circular::consumidor_b(int id_var) {
     mtx_b[id_var-N_VAR_I]->unlock();
     std::cout << "\t\tConsumer consumed " << item << std::endl;
     posicoes_vazias_b[id_var-N_VAR_I]->release();
+    return item;
 }
     //CRIAR LÓGICA NOS OUTROS MODULOS PARA QUE, SE NAO TIVER NOVAS INFORMACOES PRA ENVIAR PRO BUFFER EM UM NOVO CICLO,
     //A INFORMAÇÃO ANTERIOR SERÁ REPETIDA. ASSIM, O BUFFER NÃO FICARÁ MUITO TEMPO VAZIO E SEMPRE SERÁ ATUALIZADO. A TAXA
     //DE ATUALIZAÇÃO DOS PRODUTORES SERÁ MAIOR QUE A DOS CONSUMIDORES PARA EVITAR QUE FIQUEM ESPERANDO.
-
-    //CRIAR UM BUFFER NO MAIN
-
-int main(){}

@@ -1,3 +1,33 @@
+//IDEIA: STRUCT COM VARIOS VETORES DE DIFERENTES TIPOS, CADA UM SERÁ REFERENTE A UMA VARIÁVEL. TEREMOS 
+//MAIS DE UM CONSUMIDOR PARA CADA VARIÁVEL. O TEMPO DE PERIODICIDADE PARA CADA TAREFA CONSUMIDORA DEVE ESTAR
+//ALINHADO COM O TEMPO DE PERIODICIDADE PARA CADA TAREFA PRODUTORA, PARA QUE OS CONSUMIDORES NAO PEGUEM 
+//INFORMACOES DESATUALIZADAS.
+
+/*Cada variável terá um ID: 
+i_posicao_x - 0
+i_posicao_y - 1
+i_angulo_x - 2
+i_temperatura - 3
+o_aceleracao - 4
+o_direcao - 5
+c_acelera - 6
+c_direita - 7
+c_esquerda - 8
+
+i_falha_eletrica - 9
+i_falha_hidraulica - 10
+e_defeito - 11
+e_automatico - 12
+c_automatico - 13
+c_man - 14
+c_rearme - 15
+
+*/
+
+//CRIAR UM BUFFER NO MAIN
+
+//PASSAR COMO PARÂMETRO NAS OUTRAS FUNÇÕES ID_SENSOR.
+
 #ifndef BUFFER_H
 #define BUFFER_H
 
@@ -19,9 +49,9 @@ public:
     Buffer_Circular();
 
     void produtor_i(int i, int id_var);
-    void consumidor_i(int id_var);
+    int consumidor_i(int id_var);
     void produtor_b(bool i, int id_var);
-    void consumidor_b(int id_var);
+    bool consumidor_b(int id_var);
 
 private:
     int dados_i[N_VAR_I][N_VEC] = {0};
