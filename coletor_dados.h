@@ -15,11 +15,11 @@
  * @param running Referência para uma variável atômica que controla
  * a execução da thread.
  */
-void tarefa_coletor_dados(Buffer_Circular* buffer, std::atomic<bool>& running, int id_caminhao);
+void tarefa_coletor_dados(Buffer_Circular* buffer, std::atomic<bool>& running, int id_caminhao, int leitor_coletor_dados, int leitor_interface_local);
 void thread_pos_x(Buffer_Circular* buffer, atomic<bool>& running, float &pos_x);
 void thread_pos_y(Buffer_Circular* buffer, atomic<bool>& running, float &pos_y);
 void thread_modo_auto(Buffer_Circular* buffer, atomic<bool>& running, bool &modo_auto);
 void thread_defeito(Buffer_Circular* buffer, atomic<bool>& running, bool &defeito);
-void thread_armazena(Buffer_Circular* buffer, atomic<bool>& running, int id_caminhao, float &pos_x, float &pos_y, bool &modo_auto, bool &defeito);
+void thread_armazena(Buffer_Circular* buffer, atomic<bool>& running, int id_caminhao, float &pos_x, float &pos_y, bool &modo_auto, bool &defeito, int leitor_coletor_dados, int leitor_interface_local);
 
 #endif

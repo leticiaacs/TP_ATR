@@ -185,7 +185,7 @@ void Logica_Comando::rearme(Buffer_Circular& buffer){
 
 }
 
-int main(){
+/*int main(){
     Buffer_Circular buffer;
     Logica_Comando logica;
     std::atomic<bool> running(true);
@@ -245,4 +245,4 @@ int main(){
 
     std::cout << "[Main] Fim da simulação." << std::endl;
     return 0;
-}
+}*/

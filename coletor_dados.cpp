@@ -4,6 +4,9 @@
 #include <thread>
 #include <chrono> 
 #include <ctime> 
+#include <unistd.h>   
+#include <stdio.h>
+#include <stdlib.h>
 
 using namespace std;
 
@@ -18,7 +21,7 @@ string get_timestamp() {
     return string(buffer);
 }
 
-void tarefa_coletor_dados(Buffer_Circular* buffer, atomic<bool>& running, int id_caminhao) {
+void tarefa_coletor_dados(Buffer_Circular* buffer, atomic<bool>& running, int id_caminhao, int leitor_coletor_dados, int leitor_interface_local) {
     
     cout << "[Coletor Dados] Tarefa iniciada. Monitorando..." << endl;
     //int id_caminhao = 1; // ID Fixo para este caminhão
@@ -33,7 +36,7 @@ void tarefa_coletor_dados(Buffer_Circular* buffer, atomic<bool>& running, int id
     thread t_pos_y(thread_pos_y, ref(buffer), ref(running), ref(pos_y)); 
     thread t_modo_auto(thread_modo_auto, ref(buffer), ref(running), ref(modo_auto)); 
     thread t_defeito(thread_defeito, ref(buffer), ref(running), ref(defeito)); 
-    thread t_armazena(thread_armazena, ref(buffer), ref(running), ref(id_caminhao), ref(pos_x), ref(pos_y), ref(modo_auto), ref(defeito)); 
+    thread t_armazena(thread_armazena, ref(buffer), ref(running), ref(id_caminhao), ref(pos_x), ref(pos_y), ref(modo_auto), ref(defeito), leitor_coletor_dados, leitor_interface_local); 
 
         // Espera todas terminarem
     t_pos_x.join();
@@ -90,18 +93,26 @@ void thread_defeito(Buffer_Circular* buffer, atomic<bool>& running, bool &defeit
     }
 };
 
-void thread_armazena(Buffer_Circular* buffer, atomic<bool>& running, int id_caminhao, float &pos_x, float &pos_y, bool &modo_auto, bool &defeito) {
+void thread_armazena(Buffer_Circular* buffer, atomic<bool>& running, int id_caminhao, float &pos_x, float &pos_y, bool &modo_auto, bool &defeito, int leitor_coletor_dados, int leitor_interface_local) {
 
     while(running){
             // --- 2. GERAR O LOG  ---
         string estado_str = (modo_auto ? "AUTOMATICO" : "MANUAL");
         string defeito_str = (defeito ? "COM_DEFEITO" : "NORMAL");
 
-        cout << "[LOG] " << get_timestamp() 
-             << " | CAMINHAO_" << id_caminhao 
-             << " | ESTADO: " << estado_str 
-             << " | STATUS: " << defeito_str
-             << " | POS: (" << pos_x << ", " << pos_y << ")" << endl;
+      string msg = "[LOG] " + get_timestamp()
+                   + " | CAMINHAO_" + to_string(id_caminhao)
+                   + " | ESTADO: " + estado_str
+                   + " | STATUS: " + defeito_str
+                   + " | POS: (" + to_string(pos_x) + ", " + to_string(pos_y) + ")\n";
+
+        write(leitor_interface_local, msg.c_str(), msg.size());
+
+        // (opcional) ainda imprimir no terminal
+       // cout << msg;
+
+        this_thread::sleep_for(chrono::seconds(2));
+             
         mtx_falha_eletrica.lock();
         if(falha_eletrica_global == true){
              cout << "[LOG] " << get_timestamp()  
@@ -119,7 +130,7 @@ void thread_armazena(Buffer_Circular* buffer, atomic<bool>& running, int id_cami
         mtx_falha_hidraulica.unlock();
 
         mtx_falha_temp_alerta.lock();
-        if(falha_temp_alerta_global == true){
+        if(falha_temp_alerta_global == true){ 
              cout << "[LOG] " << get_timestamp()  
              << " | CAMINHAO_" << id_caminhao 
              << " | PRESENÇA DE FALHA DETECTADA: TEMPERATURA MUITO ALTA - DEFEITO" << endl;
