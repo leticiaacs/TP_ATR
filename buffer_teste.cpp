@@ -37,10 +37,12 @@ Cada tarefa também terá um ID - serve para garantir que a mesma tarefa não co
 Buffer_Circular::Buffer_Circular() {
     for (int i = 0; i < N_VAR_I; ++i) {
         this->posicoes_vazias_i.push_back(make_unique<counting_semaphore<N_VEC>>(N_VEC));
+        this->posicoes_cheias_i.push_back(make_unique<counting_semaphore<N_VEC>>(0));
         this->mtx_i.push_back(make_unique<mutex>());
     }
     for (int i = 0; i < N_VAR_B; ++i) {
         this->posicoes_vazias_b.push_back(make_unique<counting_semaphore<N_VEC>>(N_VEC));
+        this->posicoes_cheias_b.push_back(make_unique<counting_semaphore<N_VEC>>(0));
         this->mtx_b.push_back(make_unique<mutex>());
     }
     /*Cada sensor tem seu número de consumidores definido, de acordo com a seguinte tabela:
@@ -65,21 +67,6 @@ Buffer_Circular::Buffer_Circular() {
     */
     this->num_consumidores_i = {3,3,3,2,2,2,1,1};
     this->num_consumidores_b = {2,3,2,2,2};
-
-    posicoes_cheias_i.resize(N_VAR_I);
-    for (int idx = 0; idx < N_VAR_I; ++idx) {
-        for (int c = 0; c < 4; ++c) {
-            // cada semáforo inicia com 0 permissões; produtor libera 1 por consumidor por produção
-            posicoes_cheias_i[idx].push_back(make_unique<counting_semaphore<1>>(0));
-        }
-    }
-    posicoes_cheias_b.resize(N_VAR_B);
-    for (int idx = 0; idx < N_VAR_B; ++idx) {;
-        for (int c = 0; c < 4; ++c) {
-            // cada semáforo inicia com 0 permissões; produtor libera 1 por consumidor por produção
-            posicoes_cheias_b[idx].push_back(make_unique<counting_semaphore<1>>(0));
-        }
-    }
 }
 
 void Buffer_Circular::produz_i(float i, int id_var) {
@@ -99,6 +86,8 @@ float Buffer_Circular::consome_i(int id_var, int id_tarefa) {
     return item;
 }
 
+
+
 void Buffer_Circular::produtor_i(float i, int id_var) {
     posicoes_vazias_i[id_var]->acquire(); 
     mtx_i[id_var]->lock();
@@ -106,16 +95,12 @@ void Buffer_Circular::produtor_i(float i, int id_var) {
     mtx_i[id_var]->unlock();
     std::cout << "[PRODUTOR-I] ID " << id_var 
               << " → valor produzido: " << i << std::endl;
-        // Libera exatamente 1 permissão para cada consumidor (semáforos individuais)
-    for (int c = 0; c < 4 ; ++c) {
-        // cada semáforo de consumidor recebe 1 liberação
-        posicoes_cheias_i[id_var][c]->release();
-    }  
+    posicoes_cheias_i[id_var]->release(num_consumidores_i[id_var]);  
 }
 
 float Buffer_Circular::consumidor_i(int id_var, int id_tarefa) {
     float item;
-    posicoes_cheias_i[id_var][id_tarefa]->acquire();
+    posicoes_cheias_i[id_var]->acquire();
     mtx_i[id_var]->lock();
     item = consome_i(id_var, id_tarefa);
     mtx_i[id_var]->unlock();
@@ -146,22 +131,18 @@ bool Buffer_Circular::consome_b(int id_var, int id_tarefa) {
 void Buffer_Circular::produtor_b(bool i, int id_var) {
     int idx = id_var - N_VAR_I;
     posicoes_vazias_b[idx]->acquire(); 
-    mtx_b[idx]->lock(); 
+    mtx_b[idx]->lock();
     produz_b(i, id_var);
     mtx_b[idx]->unlock();
     std::cout << "[PROD] Bool ID " << id_var 
               << " → valor = " << (i ? "TRUE" : "FALSE") << std::endl;
-        // Libera exatamente 1 permissão para cada consumidor (semáforos individuais)
-    for (int c = 0; c < 4    ; ++c) {
-        // cada semáforo de consumidor recebe 1 liberação
-        posicoes_cheias_b[idx][c]->release();
-    }
+    posicoes_cheias_b[idx]->release(num_consumidores_b[idx]);  
 }
 
 bool Buffer_Circular::consumidor_b(int id_var, int id_tarefa) {
     int idx = id_var - N_VAR_I;
     bool item;
-    posicoes_cheias_b[idx][id_tarefa]->acquire();
+    posicoes_cheias_b[idx]->acquire();
     mtx_b[idx]->lock();
     item = consome_b(id_var, id_tarefa);
     mtx_b[idx]->unlock();
@@ -198,3 +179,31 @@ void Buffer_Circular::mostrar_buffer() {
     //CRIAR LÓGICA NOS OUTROS MODULOS PARA QUE, SE NAO TIVER NOVAS INFORMACOES PRA ENVIAR PRO BUFFER EM UM NOVO CICLO,
     //A INFORMAÇÃO ANTERIOR SERÁ REPETIDA. ASSIM, O BUFFER NÃO FICARÁ MUITO TEMPO VAZIO E SEMPRE SERÁ ATUALIZADO. A TAXA
     //DE ATUALIZAÇÃO DOS PRODUTORES SERÁ MAIOR QUE A DOS CONSUMIDORES PARA EVITAR QUE FIQUEM ESPERANDO.
+int main(){
+    Buffer_Circular buffer;
+    buffer.produtor_i(10,0);
+    buffer.mostrar_buffer();
+    buffer.produtor_i(20,0);
+    buffer.mostrar_buffer();
+    buffer.produtor_i(30,0);
+    buffer.mostrar_buffer();
+    buffer.produtor_i(40,0);
+    buffer.mostrar_buffer();
+
+    buffer.consumidor_i(0,0);
+    buffer.mostrar_buffer();
+    buffer.consumidor_i(0,1);
+    buffer.mostrar_buffer();
+    buffer.produtor_i(60,0);
+    buffer.mostrar_buffer();
+    buffer.consumidor_i(0,1);
+    buffer.mostrar_buffer();
+    buffer.consumidor_i(0,0);
+    buffer.mostrar_buffer();
+    buffer.consumidor_i(0,2);
+    buffer.mostrar_buffer();
+    buffer.produtor_i(70,0);
+    buffer.mostrar_buffer();
+
+
+}

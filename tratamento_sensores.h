@@ -6,6 +6,7 @@
 #include <vector>
 #include <thread>
 #include "buffer.h"
+#include "variaveis.h"
 using namespace std;
 
 #define M 5
@@ -13,13 +14,13 @@ using namespace std;
 class Tratamento_Sensores{
 
 private:
-    vector<int> v_i_posicao_x = {0};
-    vector<int> v_i_posicao_y = {0};
-    vector<int> v_i_angulo_x = {0};
+    vector<int> v_i_posicao_x = {0, 0, 0, 0, 0};
+    vector<int> v_i_posicao_y = {0, 0, 0, 0, 0};
+    vector<int> v_i_angulo_x = {0, 0, 0, 0, 0};
 
-    int soma_i_posicao_x = 0;
-    int soma_i_posicao_y = 0;
-    int soma_i_angulo_x = 0;
+    float soma_i_posicao_x = 0;
+    float soma_i_posicao_y = 0;
+    float soma_i_angulo_x = 0;
     
     void thread_sensor_px(Buffer_Circular& buffer, int i_posicao_x);
 
@@ -29,9 +30,9 @@ private:
 
     void constroi_vetor(vector<int>& v, int var);
 
-    int filtro(vector<int>& v);
+    float filtro(vector<int>& v);
 
-    void adiciona_buffer(Buffer_Circular& buffer, int resultado, int id_sensor);
+    void adiciona_buffer(Buffer_Circular& buffer, float resultado, int id_sensor);
 
 
 public:

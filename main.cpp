@@ -8,12 +8,16 @@
 #include "variaveis.h"
 #include "planejamento_rota.h"
 #include "coletor_dados.h"
-#include "interface_local.h"  
+#include "interface_local.h" 
+#include "controle_navegacao.h"
+#include "monitoramento_de_falhas.h" 
 
 using namespace std;
 
 // --- Variáveis Globais de Controle ---
 Buffer_Circular buffer_compartilhado;
+bool defeito_var_global = false;
+bool rearme_var_global = false;
 atomic<bool> running(true);
 
 /**
@@ -108,11 +112,22 @@ int main() {
     thread t_interface(tarefa_interface_local, 
                        &buffer_compartilhado, 
                        ref(running));
+    
+    // Tarefa Controle de Navegação
+    thread t_nav(tarefa_controle_navegacao, 
+                        &buffer_compartilhado,
+                        ref(running));
+
+    // Tarefa Monitoramento de Falhas
+    thread t_falhas(tarefa_monitoramento_falhas,
+                        &buffer_compartilhado,
+                        ref(running));
                      
     // --- Aguarda o Ctrl+C ---
     while (running) {
         this_thread::sleep_for(chrono::milliseconds(100));
     }
+
 
     cout << "[Main] Aguardando threads finalizarem..." << endl;
 
@@ -130,6 +145,12 @@ int main() {
     }
     if (t_interface.joinable()) { 
         t_interface.join();
+    }
+    if (t_nav.joinable()){
+        t_nav.join();
+    }
+    if (t_falhas.joinable()){
+        t_falhas.join();
     }
     cout << "[Main] Sistema encerrado com sucesso." << endl;
     return 0;

@@ -11,6 +11,7 @@ using namespace std;
 struct Waypoint {
     int x;
     int y;
+    int angx;
 };
 
 // Rota simulada (Quadradi)
@@ -36,6 +37,7 @@ void tarefa_planejamento_rota(Buffer_Circular* buffer, atomic<bool>& running) {
         // Escreve o setpoint 
         buffer->produtor_i(sp_atual.x, ID_SP_POS_X); 
         buffer->produtor_i(sp_atual.y, ID_SP_POS_Y);
+        buffer->produtor_i(sp_atual.angx, ID_SP_ANG_X);
 
         ind_atual = (ind_atual + 1) % rota_simulada.size();
         this_thread::sleep_for(chrono::seconds(2)); 

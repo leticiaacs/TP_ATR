@@ -4,7 +4,9 @@
 
     void Tratamento_Sensores::tratamento_sensores(Buffer_Circular& buffer, int i_posicao_x, int i_posicao_y, int i_angulo_x ){
 
-        //essa função vai ser chamada UMA vez no main e receberá os dados dos sensores por meio de um pub/sub MQTT.
+       //TAREFA RECEBERÁ OS VALORES DE POS_X, POS_Y E ANG_X POR MEIO DE PUB/SUB, MQTT. COLOQUEI NOS PARÂMETROS DA FUNÇÃO,
+       //POIS ESSA PARTE SERÁ IMPLEMENTADA POSTERIORMENTE. Quando for implementada, verificar se isso se mantém ou
+       //se esses parâmetros vão ser retirados e se os valores serão recebidos de forma diferente.
 
         // Threads para cada sensor
         thread t_x(&Tratamento_Sensores::thread_sensor_px, this, ref(buffer), i_posicao_x); //uso do ref para passar buffer como referência e nao cópia
@@ -20,31 +22,31 @@
 
     void Tratamento_Sensores::thread_sensor_px(Buffer_Circular& buffer, int i_posicao_x){
 
-        //Precisará ser PERIÓDICA. A cada novo valor recebido, essa função será chamada.
+        //Precisará ser PERIÓDICA. A cada novo valor recebido do PUB/SUB, repetir essa parte.
         this->constroi_vetor(v_i_posicao_x, i_posicao_x);
         if(v_i_posicao_x.size()==M){
-        soma_i_posicao_x = this->filtro(v_i_posicao_x);
-        this->adiciona_buffer(buffer, soma_i_posicao_x, 0);
+            soma_i_posicao_x = this->filtro(v_i_posicao_x);
+            this->adiciona_buffer(buffer, soma_i_posicao_x, ID_I_POS_X);
         }
     }
 
      void Tratamento_Sensores::thread_sensor_py(Buffer_Circular& buffer, int i_posicao_y){
 
-        //Precisará ser PERIÓDICA. A cada novo valor recebido, essa função será chamada.
+        //Precisará ser PERIÓDICA. A cada novo valor recebido do PUB/SUB, repetir essa parte.
         this->constroi_vetor(v_i_posicao_y, i_posicao_y);
         if(v_i_posicao_y.size()==M){
-        soma_i_posicao_y = this->filtro(v_i_posicao_y);
-        this->adiciona_buffer(buffer, soma_i_posicao_y, 0);
+            soma_i_posicao_y = this->filtro(v_i_posicao_y);
+            this->adiciona_buffer(buffer, soma_i_posicao_y, ID_I_POS_Y);
         }
     }
 
      void Tratamento_Sensores::thread_sensor_ax(Buffer_Circular& buffer, int i_angulo_x){
 
-        //Precisará ser PERIÓDICA. A cada novo valor recebido, essa função será chamada.
+        //Precisará ser PERIÓDICA. A cada novo valor recebido do PUB/SUB, repetir essa parte.
         this->constroi_vetor(v_i_angulo_x, i_angulo_x);
         if(v_i_angulo_x.size()==M){
-        soma_i_angulo_x = this->filtro(v_i_angulo_x);
-        this->adiciona_buffer(buffer, soma_i_angulo_x, 0);
+            soma_i_angulo_x = this->filtro(v_i_angulo_x);
+            this->adiciona_buffer(buffer, soma_i_angulo_x, ID_I_ANG_X);
         }
     }
 
@@ -53,12 +55,17 @@
             v.erase(v.begin());
         }
         v.push_back(var);
+        std::cout << "Vetor:  → ";
+        for (int j = 0; j < 5; ++j) {
+            std::cout << v[j] << " ";
+        }
+        std::cout << "\n";
     }
 
-    int Tratamento_Sensores::filtro(vector<int>& v){
+    float Tratamento_Sensores::filtro(vector<int>& v){
 
-        int soma = 0;
-        int resultado = 0;
+        float soma = 0;
+        float resultado = 0;
 
         for(int i = 0; i<M; i++){
             soma += v[i];
@@ -69,6 +76,7 @@
 
     }
 
-    void Tratamento_Sensores::adiciona_buffer(Buffer_Circular& buffer, int resultado, int id_sensor){
+    void Tratamento_Sensores::adiciona_buffer(Buffer_Circular& buffer, float resultado, int id_sensor){
         buffer.produtor_i(resultado, id_sensor);
     }
+
