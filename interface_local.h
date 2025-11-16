@@ -13,9 +13,9 @@
  * @param running Referência para uma variável atômica que controla
  * a execução da thread.
  */
-void tarefa_interface_local(Buffer_Circular* buffer, std::atomic<bool>& running, int leitor_coletor_dados, int leitor_interface_local);
-void thread_recebe_cmd(Buffer_Circular* buffer, std::atomic<bool>& running, int leitor_coletor_dados, int &envio_cmd,  mutex &mtx_envio_cmd);
-void thread_exibe_msg(Buffer_Circular* buffer, std::atomic<bool>& running, int leitor_interface_local, int &envio_cmd,  mutex &mtx_envio_cmd);
+void tarefa_interface_local(Buffer_Circular* buffer, std::atomic<bool>& running, int &leitor_coletor_dados, int &leitor_interface_local);
+void thread_recebe_cmd(Buffer_Circular* buffer, std::atomic<bool>& running, int &leitor_coletor_dados, int &envio_cmd,  mutex &mtx_envio_cmd);
+void thread_exibe_msg(Buffer_Circular* buffer, std::atomic<bool>& running, int &leitor_interface_local, int &envio_cmd,  mutex &mtx_envio_cmd);
 
 
 #endif

@@ -104,8 +104,8 @@ void Buffer_Circular::produtor_i(float i, int id_var) {
     mtx_i[id_var]->lock();
     produz_i(i, id_var);
     mtx_i[id_var]->unlock();
-    std::cout << "[PRODUTOR-I] ID " << id_var 
-              << " → valor produzido: " << i << std::endl;
+    //std::cout << "[PRODUTOR-I] ID " << id_var 
+      //        << " → valor produzido: " << i << std::endl;
         // Libera exatamente 1 permissão para cada consumidor (semáforos individuais)
     for (int c = 0; c < 4 ; ++c) {
         // cada semáforo de consumidor recebe 1 liberação
@@ -149,7 +149,7 @@ void Buffer_Circular::produtor_b(bool i, int id_var) {
     mtx_b[idx]->lock(); 
     produz_b(i, id_var);
     mtx_b[idx]->unlock();
-    std::cout << "[PROD] Bool ID " << id_var 
+   std::cout << "[PROD] Bool ID " << id_var 
               << " → valor = " << (i ? "TRUE" : "FALSE") << std::endl;
         // Libera exatamente 1 permissão para cada consumidor (semáforos individuais)
     for (int c = 0; c < 4    ; ++c) {
