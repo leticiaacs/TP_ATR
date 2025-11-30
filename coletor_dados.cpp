@@ -19,6 +19,10 @@
 
 using namespace std;
 
+// VAR GLOBAIS
+std::mutex mtx_falha_eletrica;
+bool falha_eletrica_global = false;
+
 // ID DA TAREFA
 #define ID_TAREFA_COLETOR 1
 
