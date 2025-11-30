@@ -31,6 +31,9 @@ private:
     bool e_defeito     = false;
     bool e_automatico  = false;
 
+    int esq_local;
+    int dir_local;
+
     // Comando de rearme (lido do buffer e repassado ao monitoramento)
     bool c_rearme      = false;
 

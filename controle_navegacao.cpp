@@ -1,17 +1,19 @@
 #include "controle_navegacao.h"
 #include "variaveis.h"
+
 #include <iostream>
-#include <thread>
-#include <chrono>
 #include <cmath>
+#include <functional>
+#include <boost/asio.hpp>
 
 using namespace std;
 
-void tarefa_controle_navegacao(Buffer_Circular* buffer, atomic<bool>& running) {
-
+void tarefa_controle_navegacao(Buffer_Circular* buffer,
+                               std::atomic<bool>& running)
+{
     cout << "[Controle Navegação] Tarefa iniciada (PID)." << endl;
 
-    // --- Ganhos do controle PID ---
+    // --- Ganhos PID (ajustáveis) ---
     const double Kp_vel = 0.8;
     const double Ki_vel = 0.2;
     const double Kd_vel = 0.1;
@@ -20,100 +22,125 @@ void tarefa_controle_navegacao(Buffer_Circular* buffer, atomic<bool>& running) {
     const double Ki_ang = 0.3;
     const double Kd_ang = 0.2;
 
-    // --- Variáveis de estado ---
-    double setpoint_x = buffer->consumidor_i(ID_SP_POS_X);
-    double setpoint_y = buffer->consumidor_i(ID_SP_POS_Y);
-    double setpoint_ang = buffer->consumidor_i(ID_SP_ANG_X);
+    // --- Estado interno do controlador ---
+    const double dt = 1.0; // 1 s (mesmo período do planejamento de rota)
 
-    double erro_vel_anterior = 0.0, erro_ang_anterior = 0.0;
-    double integral_vel = 0.0, integral_ang = 0.0;
+    double erro_vel_anterior = 0.0;
+    double erro_ang_anterior = 0.0;
+    double integral_vel      = 0.0;
+    double integral_ang      = 0.0;
 
     bool automatico_anterior = false;
 
-    // --- Parâmetros temporais ---
-    const double dt = 0.2; // 200 ms = 0.2 s
+    double ult_pos_x = 0.0;
+    double ult_pos_y = 0.0;
+    bool   tem_pos_ant = false;
 
-    while (running) {
+    boost::asio::io_context io;
+    boost::asio::steady_timer timer(io, boost::asio::chrono::milliseconds(1000));
 
-        // --- 1. Leitura dos sensores ---
-        int pos_x = buffer->consumidor_i(ID_I_POS_X);
-        int pos_y = buffer->consumidor_i(ID_I_POS_Y);
-        int angulo = buffer->consumidor_i(ID_I_ANG_X);
-//      int velocidade = buffer->consumidor_i(ID_I_VELOCIDADE);
-        int velocidade = 60;   // n entendi da onde viria esse valor entao coloquei um valor ficticio 
+    std::function<void(const boost::system::error_code&)> handler;
+    handler = [&](const boost::system::error_code& ec) {
+        if (ec) return;
+        if (!running) return;
 
-        bool automatico = buffer->consumidor_b(ID_E_AUTOMATICO);
+        // -----------------------------------------------------------------
+        // 1) Leitura dos estados filtrados do buffer (sensores)
+        //    ID da tarefa consumidor: 2 (controle_navegacao)
+        // -----------------------------------------------------------------
+        double pos_x  = buffer->consumidor_i(ID_I_POS_X, 2);
+        double pos_y  = buffer->consumidor_i(ID_I_POS_Y, 2);
+        double angulo = buffer->consumidor_i(ID_I_ANG_X, 2);
+        bool automatico = buffer->consumidor_b(ID_E_AUTOMATICO, 2);
 
-        // --- 2. Cálculo da velocidade de referência (distância até o setpoint) ---
-        double dist = sqrt(pow(setpoint_x - pos_x, 2) + pow(setpoint_y - pos_y, 2));
+        // -----------------------------------------------------------------
+        // 2) Leitura dos setpoints de velocidade e ângulo
+        // -----------------------------------------------------------------
+        double sp_vel = buffer->consumidor_i(ID_SP_VEL,   2);
+        double sp_ang = buffer->consumidor_i(ID_SP_ANG_X, 2);
 
-        // --- 3. MODO AUTOMÁTICO ---
+        // Estimativa de velocidade a partir da diferença de posição
+        double vel_atual = 0.0;
+        if (tem_pos_ant) {
+            double dx = pos_x - ult_pos_x;
+            double dy = pos_y - ult_pos_y;
+            vel_atual = std::sqrt(dx*dx + dy*dy) / dt;
+        }
+        ult_pos_x   = pos_x;
+        ult_pos_y   = pos_y;
+        tem_pos_ant = true;
+
         if (automatico) {
-
+            // ----------------------------- AUTOMÁTICO -----------------------------
             if (!automatico_anterior) {
-                cout << "[Controle Navegação] Transição MANUAL → AUTOMÁTICO. (Bumpless transfer)" << endl;
+                cout << "[Controle Navegação] MANUAL → AUTOMÁTICO (bumpless)." << endl;
             }
 
-            // === CONTROLADOR DE VELOCIDADE (PID) ===
-            double erro_vel = dist - velocidade; // queremos zerar a diferença entre velocidade alvo e atual
+            // PID de velocidade
+            double erro_vel = sp_vel - vel_atual;
             integral_vel += erro_vel * dt;
             double derivada_vel = (erro_vel - erro_vel_anterior) / dt;
-
-            double u_vel = Kp_vel * erro_vel + Ki_vel * integral_vel + Kd_vel * derivada_vel;
+            double u_vel = Kp_vel*erro_vel + Ki_vel*integral_vel + Kd_vel*derivada_vel;
             erro_vel_anterior = erro_vel;
 
-            // === CONTROLADOR ANGULAR (PID) ===
-            double erro_ang = setpoint_ang - angulo;
+            // PID angular
+            double erro_ang = sp_ang - angulo;
             integral_ang += erro_ang * dt;
             double derivada_ang = (erro_ang - erro_ang_anterior) / dt;
-
-            double u_ang = Kp_ang * erro_ang + Ki_ang * integral_ang + Kd_ang * derivada_ang;
+            double u_ang = Kp_ang*erro_ang + Ki_ang*integral_ang + Kd_ang*derivada_ang;
             erro_ang_anterior = erro_ang;
 
-            // --- Saturação ---
-            if (u_vel > 100) u_vel = 100;
+            // Saturações
+            if (u_vel > 100)  u_vel = 100;
             if (u_vel < -100) u_vel = -100;
-            if (u_ang > 180) u_ang = 180;
+            if (u_ang > 180)  u_ang = 180;
             if (u_ang < -180) u_ang = -180;
 
-            // --- Escrita no buffer ---
-            buffer->produtor_i(static_cast<int>(u_vel), ID_O_ACELERACAO);
-            buffer->produtor_i(static_cast<int>(u_ang), ID_O_DIR);
+            int cmd_acel = static_cast<int>(std::round(u_vel));
+            int cmd_ang  = static_cast<int>(std::round(u_ang));
 
-            cout << "[Controle Navegação] AUTO | Vel=" << velocidade
-                 << " spDist=" << dist << " -> Acel=" << u_vel
-                 << " | Ang=" << angulo << " spAng=" << setpoint_ang
-                 << " -> Dir=" << u_ang << endl;
+            // Converte comando angular em "direita" / "esquerda"
+            int cmd_esq = (cmd_ang > 0) ? cmd_ang : 0;
+            int cmd_dir = (cmd_ang < 0) ? -cmd_ang : 0;
+
+            // *** ALTERADO: comandos vão para C_ACELERA / C_DIREITA / C_ESQUERDA ***
+            buffer->produtor_i(cmd_acel, ID_C_ACELERA);
+            buffer->produtor_i(cmd_dir,  ID_C_DIREITA);
+            buffer->produtor_i(cmd_esq,  ID_C_ESQUERDA);
+
+            cout << "[Controle Navegação] AUTO | vel_atual=" << vel_atual
+                 << " sp_vel=" << sp_vel  << " cmd_acel=" << cmd_acel
+                 << " | ang=" << angulo  << " sp_ang=" << sp_ang
+                 << " cmd_ang=" << cmd_ang << endl;
         }
-        // --- 4. MODO MANUAL ---
         else {
-
+            // ----------------------------- MANUAL -----------------------------
             if (automatico_anterior) {
-                cout << "[Controle Navegação] Transição AUTOMÁTICO → MANUAL. (Bumpless transfer)" << endl;
+                cout << "[Controle Navegação] AUTOMÁTICO → MANUAL (controle desligado)." << endl;
             }
 
-            // Atualiza setpoints com o estado atual (bumpless)
-            setpoint_x = pos_x;
-            setpoint_y = pos_y;
-            setpoint_ang = angulo;
+            // "Bumpless transfer": zera integrais e derivações
+            integral_vel = integral_ang = 0.0;
+            erro_vel_anterior = erro_ang_anterior = 0.0;
 
-            // Zera termos integrais e derivativos (evita “windup”)
-            integral_vel = 0.0;
-            integral_ang = 0.0;
-            erro_vel_anterior = 0.0;
-            erro_ang_anterior = 0.0;
+            // Em modo manual, quem manda é o operador (via Interface Local),
+            // então zeramos os comandos automáticos.
+            buffer->produtor_i(0, ID_C_ACELERA);
+            buffer->produtor_i(0, ID_C_DIREITA);
+            buffer->produtor_i(0, ID_C_ESQUERDA);
 
-            // Desativa atuadores
-            buffer->produtor_i(0, ID_O_ACELERACAO);
-            buffer->produtor_i(0, ID_O_DIR);
-
-            cout << "[Controle Navegação] MANUAL | Controle desligado. SP_x=" << setpoint_x
-                 << " SP_y=" << setpoint_y << " SP_ang=" << setpoint_ang << endl;
+            cout << "[Controle Navegação] MANUAL | Controle PID desligado." << endl;
         }
 
         automatico_anterior = automatico;
-        this_thread::sleep_for(chrono::milliseconds(200)); // período de amostragem
-    }
+
+        // Reprograma o próximo disparo (tarefa periódica sem sleep)
+        timer.expires_at(timer.expiry() + boost::asio::chrono::milliseconds(1000));
+        timer.async_wait(handler);
+    };
+
+    timer.async_wait(handler);
+    io.run();
 
     cout << "[Controle Navegação] Tarefa encerrada." << endl;
 }

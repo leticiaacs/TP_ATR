@@ -6,9 +6,19 @@
 
 /**
  * @brief Tarefa responsável por controlar a navegação do caminhão.
- * - Em modo AUTOMÁTICO: calcula aceleração e direção com base nos setpoints.
- * - Em modo MANUAL: não interfere (os comandos vêm do operador).
- * - Escreve no buffer os valores de o_aceleracao e o_direcao.
+ *
+ * - Em modo AUTOMÁTICO:
+ *      * Lê do buffer os setpoints de velocidade e ângulo (SP_VEL, SP_ANG_X);
+ *      * Lê os estados atuais (posição, ângulo, modo automático);
+ *      * Aplica controle PID em velocidade e ângulo;
+ *      * Escreve no buffer os sinais de o_aceleracao e o_direcao.
+ *
+ * - Em modo MANUAL:
+ *      * Zera a ação do controlador (PID);
+ *      * Não interfere nos atuadores (quem manda é o operador).
+ *
+ * A periodicidade da tarefa é determinada pelos consumidores do Buffer_Circular
+ * (sem uso de sleep), via semáforos internos do próprio buffer.
  */
 void tarefa_controle_navegacao(Buffer_Circular* buffer, std::atomic<bool>& running);
 

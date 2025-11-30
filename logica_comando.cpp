@@ -41,13 +41,13 @@ void Logica_Comando::mqtt_loop()
         {
             // travar o que for necessário (ex.: mtx_auto, mtx_defeito, etc.)
             std::lock_guard<std::mutex> lock_a(mtx_auto);
-            auto_flag = e_automatico;
+            auto_flag = this->e_automatico;
             std::lock_guard<std::mutex> lock_d(mtx_defeito);
-            def_flag  = e_defeito;
+            def_flag  = this->e_defeito;
             std::lock_guard<std::mutex> lock_acel(mtx_acel);
-            acel = o_aceleracao;
+            acel = this->o_aceleracao;
             std::lock_guard<std::mutex> lock_direcao(mtx_direcao);
-            dir = o_direcao;
+            dir = this->o_direcao;
         }
 
         std::string payload = "{"
@@ -219,7 +219,7 @@ void Logica_Comando::info_automatico(Buffer_Circular& buffer) {
     bool comando_man;
     {
         lock_guard<mutex> lock(mtx_man);
-        comando_auto = this->manual;
+        comando_man = this->manual;
     }
 
     bool tem_defeito;
@@ -289,6 +289,7 @@ void Logica_Comando::direita_consome(Buffer_Circular& buffer) {
 
     lock_guard<mutex> lock(mtx_dir);
     this->dir  = buffer.consumidor_i(ID_C_DIREITA,  0);
+    this->dir_local = this->dir;
 
 }
 
@@ -311,8 +312,9 @@ void Logica_Comando::thread_esquerda_consome(Buffer_Circular& buffer) {
 
 void Logica_Comando::esquerda_consome(Buffer_Circular& buffer) {
 
-    lock_guard<mutex> lock(mtx_dir);
+    lock_guard<mutex> lock(mtx_esq);
     this->esq  = buffer.consumidor_i(ID_C_ESQUERDA,0);
+    this->esq_local = this->esq;
 
 }
 
@@ -337,13 +339,10 @@ void Logica_Comando::thread_saida_atuador_direcao(Buffer_Circular& buffer) {
 }
 
 void Logica_Comando::saida_atuador_direcao(Buffer_Circular& buffer) {
-    {
 
-    lock_guard<mutex> lock(mtx_dir);
-    lock_guard<mutex> lock2(mtx_esq);
-    lock_guard<mutex> lock3(mtx_direcao);
-    o_direcao = (this->esq)-(this->dir);
-    
+    {
+        std::lock_guard<std::mutex> lock_d(mtx_direcao);
+        this->o_direcao = this->esq_local - this->dir_local;
     }
 }
 
@@ -385,10 +384,17 @@ void envia_comandos(Buffer_Circular& buffer, int acel, int dir)
         buffer.produtor_i(dir, ID_C_ESQUERDA);   // direção positiva = esquerda
     else if (dir < 0)
         buffer.produtor_i(-dir, ID_C_DIREITA);   // direção negativa = direita
+    else {
+        buffer.produtor_i(0, ID_C_ESQUERDA);
+        buffer.produtor_i(0, ID_C_DIREITA);
+    }
 
     // estados fixos
     buffer.produtor_b(false, ID_C_MANUAL);
     buffer.produtor_b(true,  ID_C_AUTOMATICO);
+
+    // === ALTERAÇÃO FEITA AQUI ===
+    // sempre envia rearme = 0
     buffer.produtor_b(false, ID_C_REARME);
 }
 
@@ -400,23 +406,22 @@ int main()
     std::atomic<bool> running(true);
     int caminhao_id = 1;
 
-    // --- monitoramento ---
+    // --- Monitoramento de falhas (MQTT /falhas) ---
+    std::thread t_falhas(
+        tarefa_monitoramento_falhas,
+        &buffer,
+        std::ref(running),
+        caminhao_id,
+        "localhost",
+        1883
+    );
 
-std::thread t_falhas(
-    tarefa_monitoramento_falhas,
-    &buffer,
-    std::ref(running),
-    caminhao_id,
-    "localhost",   // broker
-    1883           // porta
-);
-
-    // --- tratamento de sensores ---
+    // --- Tratamento de sensores (MQTT /sensores) ---
     std::thread t_ts([&]() {
         tarefa_tratamento_sensores(&buffer, running, caminhao_id);
     });
 
-    // --- lógica de comando ---
+    // --- Lógica de comando (MQTT /atuadores) ---
     Logica_Comando logica;
     std::thread t_logica([&]() {
         logica.start(buffer, "localhost", 1883, caminhao_id);
@@ -429,19 +434,19 @@ std::thread t_falhas(
     std::cout << "\n[MAIN] Movimento 1: 45 graus (2s)\n";
     for (int i = 0; i < 10; i++) {
         envia_comandos(buffer, 30, 45);
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     std::cout << "\n[MAIN] Movimento 2: 90 graus (2s)\n";
     for (int i = 0; i < 10; i++) {
         envia_comandos(buffer, 30, 90);
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     std::cout << "\n[MAIN] Movimento 3: 180 graus (2s)\n";
     for (int i = 0; i < 10; i++) {
         envia_comandos(buffer, 30, 180);
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     // ================================================================
