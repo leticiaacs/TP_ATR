@@ -1,6 +1,4 @@
 #include "interface_local.h"
-#include "coletor_dados.h"
-#include "variaveis.h"
 
 #include <iostream>
 #include <thread>
@@ -18,6 +16,7 @@
 using namespace std;
 
 // Estas variáveis guardam o último estado conhecido recebido do Coletor.
+int   local_id = -1; 
 float local_pos_x = 0.0f;
 float local_pos_y = 0.0f;
 float local_angulo = 0.0f;
@@ -48,7 +47,20 @@ void limitar_posicao(float &x, float &y) {
 void parse_mensagem_log(string msg) {
     lock_guard<mutex> lock(mtx_dados_locais);
     
-    
+    // 0. Extrair ID do Caminhão [NOVO]
+    size_t id_start = msg.find("CAMINHAO_");
+    if (id_start != string::npos) {
+        try {
+            // O número começa logo depois de "CAMINHAO_" 
+            size_t start_num = id_start + 9;
+            size_t end_num = msg.find(" |", start_num);
+            if (end_num != string::npos) {
+                string s_id = msg.substr(start_num, end_num - start_num);
+                local_id = stoi(s_id);
+            }
+        } catch (...) {}
+    }
+
     // 1. Extrair Estado
     if (msg.find("ESTADO: AUTOMATICO") != string::npos) local_estado = "AUTOMATICO";
     else if (msg.find("ESTADO: MANUAL") != string::npos) local_estado = "MANUAL";
@@ -76,25 +88,18 @@ void parse_mensagem_log(string msg) {
                 
                 local_pos_x = x;
                 local_pos_y = y;
-                
-                // Se o coletor passar a enviar angulo, adicione aqui.
-
             } catch (...) {}
         }
     }
-    // 4. Extrair Ângulo (NOVO)
-    // Procura pela string " | ANG: "
+
+    // 4. Extrair Ângulo
     size_t ang_start = msg.find("ANG: ");
     if (ang_start != string::npos) {
         try {
-            // O número começa logo depois de "ANG: " (5 chars)
             size_t start_num = ang_start + 5;
-            // Vai até o fim da linha ou próximo pipe (no nosso caso é fim da linha \n)
             string s_ang = msg.substr(start_num);
-            
             float ang = stof(s_ang);
             
-            // Corrige erro de "virar infinito"
             normalizar_angulo(ang);
             
             local_angulo = ang;
@@ -165,12 +170,12 @@ void thread_recebe_cmd(Buffer_Circular* /*buffer*/,
             // Acessa a memória local protegida e imprime
             lock_guard<mutex> lock(mtx_dados_locais);
             
-            cout << "\n=== STATUS DO SISTEMA ===" << endl;
+            cout << "\n=== STATUS DO SISTEMA (CAMINHAO " << local_id << ") ===" << endl;
             cout << "Estado Operacional: " << local_estado << endl;
             cout << "Status de Falha:    " << local_status << endl;
             cout << "Posicao Atual:      (" << local_pos_x << ", " << local_pos_y << ")" << endl;
             cout << "Angulo (Norte=0):   " << local_angulo << " graus" << endl;
-            cout << "=========================\n" << endl;
+            cout << "=======================================\n" << endl;
             
             continue; // Volta para o loop, não envia nada pro pipe
         }
@@ -196,7 +201,6 @@ void thread_recebe_cmd(Buffer_Circular* /*buffer*/,
     }
 }
 
-
 void thread_exibe_msg(Buffer_Circular* /*buffer*/,
                       atomic<bool>& running,
                       int &leitor_interface_local,
@@ -215,7 +219,6 @@ void thread_exibe_msg(Buffer_Circular* /*buffer*/,
 
             // Processa a mensagem para atualizar as variáveis locais
             parse_mensagem_log(mensagem_recebida);
-            
         }
         else {
             // espera um pouco para não fritar CPU
