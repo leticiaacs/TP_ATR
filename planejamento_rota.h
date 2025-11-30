@@ -6,13 +6,16 @@
 
 /**
  * @brief Executa a tarefa cíclica de Planejamento de Rota.
- * * Esta função simula o planejamento de rota, enviando setpoints
- * de posição (X, Y) para o buffer circular. Na Etapa 1, ela
- * simula uma rota pré-definida.
- * * @param buffer Ponteiro para o buffer circular compartilhado.
- * @param running Referência para uma variável atômica que controla
- * a execução da thread (true = rodando, false = parar).
+ *
+ * - Simula um planejamento de rota determinando, ao longo do tempo,
+ *   setpoints de velocidade (SP_VEL) e ângulo (SP_ANG_X) para o caminhão;
+ * - Escreve esses setpoints no Buffer_Circular para que o Controle de Navegação
+ *   (tarefa_controle_navegacao) possa consumi-los;
+ * - A periodicidade é controlada por um timer (ex.: Boost.Asio), sem uso de sleep.
+ *
+ * @param buffer Ponteiro para o buffer circular compartilhado.
+ * @param running Flag atômica que controla a execução da tarefa
+ *        (true = rodando, false = encerrar).
  */
-void tarefa_planejamento_rota(Buffer_Circular* buffer, std::atomic<bool>& running);
-
+void tarefa_planejamento_rota(Buffer_Circular* buffer, std::atomic<bool>& running, int id_caminhao);
 #endif
