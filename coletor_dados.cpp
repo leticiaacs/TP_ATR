@@ -19,21 +19,7 @@
 
 using namespace std;
 
-// FLOAT/INT
-#define ID_I_POS_X      0
-#define ID_I_POS_Y      1
-#define ID_I_ANG_X      2
-#define ID_C_ACELERA    3
-#define ID_C_DIREITA    4
-#define ID_C_ESQUERDA   5
-// BOOL (IDs Globais)
-#define ID_E_DEFEITO    8
-#define ID_E_AUTOMATICO 9
-#define ID_C_AUTOMATICO 10
-#define ID_C_MANUAL     11
-#define ID_C_REARME     12
-
-// ID DA TAREFA (Conforme seu comentário: coletor_dados = 1)
+// ID DA TAREFA
 #define ID_TAREFA_COLETOR 1
 
 // Inicializado com 0 (bloqueado)
@@ -53,9 +39,7 @@ string get_timestamp() {
     return string(buffer);
 }
 
-// ============================================================================
-// TAREFA PRINCIPAL
-// ============================================================================
+// Inicializa as variáveis locais, cria as 4 threads Leitura, Log, Envio, Interface e espera elas terminarem
 void tarefa_coletor_dados(Buffer_Circular* buffer,
                           atomic<bool>& running,
                           int id_caminhao,
