@@ -50,6 +50,7 @@ caminhoes: dict[int, CaminhaoState] = {}
 
 def get_or_create_truck(cam_id: int) -> CaminhaoState:
     if cam_id not in caminhoes:
+        print(f"[sim_mina] Criando caminhão {cam_id} ao receber primeira mensagem MQTT.")
         caminhoes[cam_id] = CaminhaoState(cam_id=cam_id)
     return caminhoes[cam_id]
 
@@ -123,7 +124,9 @@ def atualiza_dinamica(st: CaminhaoState, dt: float) -> None:
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         print("[sim_mina] Conectado ao broker MQTT (rc=0)")
+        # recebe comandos de atuadores vindos da logica_comando
         client.subscribe("atr/caminhao/+/atuadores")
+        print("[sim_mina] Subscrito em atr/caminhao/+/atuadores")
     else:
         print(f"[sim_mina] Falha ao conectar MQTT, rc={rc}")
 
@@ -141,8 +144,20 @@ def on_message(client, userdata, msg):
     if len(parts) < 4:
         return
 
-    cam_id = int(parts[2])
-    st = get_or_create_truck(cam_id)
+    # ID vem do tópico: atr/caminhao/<id>/atuadores
+    try:
+        cam_id_topic = int(parts[2])
+    except ValueError:
+        print("[sim_mina] ID inválido no tópico:", topic)
+        return
+
+    # se também vier "id" no payload, podemos conferir (opcional)
+    cam_id_payload = data.get("id")
+    if cam_id_payload is not None and cam_id_payload != cam_id_topic:
+        print(f"[sim_mina] Aviso: id do payload ({cam_id_payload}) "
+              f"difere do id do tópico ({cam_id_topic}). Usando o do tópico.")
+
+    st = get_or_create_truck(cam_id_topic)
 
     if parts[3] != "atuadores":
         return
@@ -181,7 +196,7 @@ def desenha_grid(screen):
 def desenha_caminhao(screen, font, st: CaminhaoState, selecionado_id: int | None):
     sx, sy = world_to_screen(st.x, st.y)
 
-    # cor: verde auto, amarelo manual, vermelho se defeito (informativo)
+    # cor: verde auto, amarelo manual, vermelho se defeito (só visual)
     if st.defeito:
         color = (220, 60, 60)
     elif st.automatico:
@@ -221,7 +236,7 @@ def desenha_painel(screen, font_small, selecionado_id):
 def main():
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-    pygame.display.setCaption = pygame.display.set_caption("Simulação da Mina - ATR / Caminhão")
+    pygame.display.set_caption("Simulação da Mina - ATR / Caminhão")
     font = pygame.font.SysFont("consolas", 14)
     font_small = pygame.font.SysFont("consolas", 12)
 
@@ -235,11 +250,9 @@ def main():
     running = True
     selecionado_id: int | None = None
 
-    get_or_create_truck(1)
-
     last_publish = time.time()
 
-    print("[sim_mina] Simulação iniciada.")
+    print("[sim_mina] Simulação iniciada. Caminhões serão criados somente ao receber mensagens MQTT.")
 
     while running:
         dt = clock.tick(FPS) / 1000.0
@@ -249,46 +262,38 @@ def main():
                 running = False
 
             elif event.type == pygame.KEYDOWN:
-                # números 1..9 selecionam caminhão
+                # números 1..9 selecionam caminhão (se já existirem)
                 if pygame.K_1 <= event.key <= pygame.K_9:
                     idx = event.key - pygame.K_1 + 1
                     if idx in caminhoes:
                         selecionado_id = idx
                         print(f"[sim_mina] Caminhão selecionado: {selecionado_id}")
                     else:
-                        print(f"[sim_mina] Caminhão {idx} ainda não existe.")
+                        print(f"[sim_mina] Caminhão {idx} ainda não existe (nenhuma msg MQTT recebida).")
 
-                # F = toggla falha elétrica local
                 elif event.key == pygame.K_f:
-                    target_id = selecionado_id
-                    if target_id is None and len(caminhoes) == 1:
-                        target_id = next(iter(caminhoes))
-                        selecionado_id = target_id
-
-                    if target_id is not None and target_id in caminhoes:
-                        st = caminhoes[target_id]
+                    # toggla falha elétrica no caminhão selecionado
+                    if selecionado_id is not None and selecionado_id in caminhoes:
+                        st = caminhoes[selecionado_id]
                         st.falha_eletrica = not st.falha_eletrica
-                        print(f"[sim_mina] Caminhão {target_id}: falha elétrica = {st.falha_eletrica}")
+                        print(f"[sim_mina] Caminhão {selecionado_id}: falha elétrica = {st.falha_eletrica}")
                     else:
-                        print("[sim_mina] Nenhum caminhão selecionado para falha elétrica.")
+                        print("[sim_mina] Nenhum caminhão selecionado ou ainda criado para falha elétrica.")
 
-                # H = toggla falha hidráulica local
                 elif event.key == pygame.K_h:
-                    target_id = selecionado_id
-                    if target_id is None and len(caminhoes) == 1:
-                        target_id = next(iter(caminhoes))
-                        selecionado_id = target_id
-
-                    if target_id is not None and target_id in caminhoes:
-                        st = caminhoes[target_id]
+                    # toggla falha hidráulica
+                    if selecionado_id is not None and selecionado_id in caminhoes:
+                        st = caminhoes[selecionado_id]
                         st.falha_hidraulica = not st.falha_hidraulica
-                        print(f"[sim_mina] Caminhão {target_id}: falha hidráulica = {st.falha_hidraulica}")
+                        print(f"[sim_mina] Caminhão {selecionado_id}: falha hidráulica = {st.falha_hidraulica}")
                     else:
-                        print("[sim_mina] Nenhum caminhão selecionado para falha hidráulica.")
+                        print("[sim_mina] Nenhum caminhão selecionado ou ainda criado para falha hidráulica.")
 
+        # Atualiza dinâmica de todos os caminhões existentes
         for st in caminhoes.values():
             atualiza_dinamica(st, dt)
 
+        # desenha
         desenha_grid(screen)
         for st in caminhoes.values():
             desenha_caminhao(screen, font, st, selecionado_id)
@@ -296,6 +301,7 @@ def main():
 
         pygame.display.flip()
 
+        # publica sensores e falhas a cada ~100 ms
         now = time.time()
         if now - last_publish > 0.1:
             for st in caminhoes.values():

@@ -5,6 +5,7 @@
 
 #include "logica_comando.h"
 #include "monitoramento_de_falhas.h"
+#include "tratamento_sensores.h"
 //#include "coletor_dados.h"
 
 void Logica_Comando::mqtt_init(const std::string& broker, int port, int cam_id)
@@ -43,9 +44,9 @@ void Logica_Comando::mqtt_loop()
             auto_flag = e_automatico;
             std::lock_guard<std::mutex> lock_d(mtx_defeito);
             def_flag  = e_defeito;
-            std::lock_guard<std::mutex> lock_d(mtx_acel);
+            std::lock_guard<std::mutex> lock_acel(mtx_acel);
             acel = o_aceleracao;
-            std::lock_guard<std::mutex> lock_d(mtx_direcao);
+            std::lock_guard<std::mutex> lock_direcao(mtx_direcao);
             dir = o_direcao;
         }
 
@@ -340,7 +341,7 @@ void Logica_Comando::saida_atuador_direcao(Buffer_Circular& buffer) {
 
     lock_guard<mutex> lock(mtx_dir);
     lock_guard<mutex> lock2(mtx_esq);
-    lock_guard<mutex> lock(mtx_direcao);
+    lock_guard<mutex> lock3(mtx_direcao);
     o_direcao = (this->esq)-(this->dir);
     
     }
@@ -376,27 +377,83 @@ void Logica_Comando::rearme(Buffer_Circular& buffer) {
     }
 }
 
+void envia_comandos(Buffer_Circular& buffer, int acel, int dir)
+{
+    buffer.produtor_i(acel, ID_C_ACELERA);
 
-// main de teste antigo – mantido comentado
-/*int main(){
+    if (dir > 0)
+        buffer.produtor_i(dir, ID_C_ESQUERDA);   // direção positiva = esquerda
+    else if (dir < 0)
+        buffer.produtor_i(-dir, ID_C_DIREITA);   // direção negativa = direita
+
+    // estados fixos
+    buffer.produtor_b(false, ID_C_MANUAL);
+    buffer.produtor_b(true,  ID_C_AUTOMATICO);
+    buffer.produtor_b(false, ID_C_REARME);
+}
+
+int main()
+{
+    std::cout << "\n=== [TESTE MOVIMENTO] 45° → 90° → 180° (2s cada) ===\n";
+
     Buffer_Circular buffer;
-    Logica_Comando logica;
     std::atomic<bool> running(true);
+    int caminhao_id = 1;
 
-    std::thread t_monitor([&]() {
-        tarefa_monitoramento_falhas(&buffer, running);
+    // --- monitoramento ---
+
+std::thread t_falhas(
+    tarefa_monitoramento_falhas,
+    &buffer,
+    std::ref(running),
+    caminhao_id,
+    "localhost",   // broker
+    1883           // porta
+);
+
+    // --- tratamento de sensores ---
+    std::thread t_ts([&]() {
+        tarefa_tratamento_sensores(&buffer, running, caminhao_id);
     });
 
+    // --- lógica de comando ---
+    Logica_Comando logica;
     std::thread t_logica([&]() {
-        logica.logica_comando(buffer);
+        logica.start(buffer, "localhost", 1883, caminhao_id);
     });
 
-    // Simulação...
+    // ================================================================
+    // SEQUÊNCIA DE TESTE (2s por direção)
+    // ================================================================
 
-    running = false;
+    std::cout << "\n[MAIN] Movimento 1: 45 graus (2s)\n";
+    for (int i = 0; i < 10; i++) {
+        envia_comandos(buffer, 30, 45);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
 
-    if (t_monitor.joinable()) t_monitor.join();
+    std::cout << "\n[MAIN] Movimento 2: 90 graus (2s)\n";
+    for (int i = 0; i < 10; i++) {
+        envia_comandos(buffer, 30, 90);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    std::cout << "\n[MAIN] Movimento 3: 180 graus (2s)\n";
+    for (int i = 0; i < 10; i++) {
+        envia_comandos(buffer, 30, 180);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    // ================================================================
+    // ENCERRAMENTO
+    // ================================================================
+    std::cout << "\n[MAIN] Encerrando teste...\n";
+    running.store(false);
+
+    if (t_ts.joinable())      t_ts.join();
+    if (t_falhas.joinable())  t_falhas.join();
     if (t_logica.joinable())  t_logica.join();
 
+    std::cout << "[MAIN] Finalizado.\n";
     return 0;
-}*/
+}
