@@ -16,21 +16,37 @@
 #include <fstream>
 #include <mutex>
 #include <atomic>
+#include <vector>
+#include <memory> 
 
 using namespace std;
 
-// VAR GLOBAIS
-std::mutex mtx_falha_eletrica;
-bool falha_eletrica_global = false;
+#define NUM_CAMINHOES 200 
 
-// ID DA TAREFA
 #define ID_TAREFA_COLETOR 1
 
-// Inicializado com 0 (bloqueado)
-static std::counting_semaphore<1024> sem_novos_dados(0);
+// Vetor de Semáforos (um para cada caminhão)
+static vector<unique_ptr<std::counting_semaphore<1024>>> sem_novos_dados_vec;
 
-// Mutex para proteger as variáveis de comando
-std::mutex mtx_dados_cmd;
+// Vetor de Mutexes (um para cada caminhão)
+static vector<unique_ptr<std::mutex>> mtx_dados_cmd_vec;
+
+// Flag para garantir inicialização única
+static std::once_flag flag_init_sinc;
+
+// Função para inicializar os vetores de sincronização
+void inicializar_sincronizacao() {
+    sem_novos_dados_vec.clear();
+    mtx_dados_cmd_vec.clear();
+    
+    for(int i = 0; i < NUM_CAMINHOES; i++) {
+        // Cria semáforo inicializado com 0
+        sem_novos_dados_vec.push_back(make_unique<std::counting_semaphore<1024>>(0));
+        // Cria mutex
+        mtx_dados_cmd_vec.push_back(make_unique<std::mutex>());
+    }
+    cout << "[Sistema] Sincronizacao inicializada para " << NUM_CAMINHOES << " caminhoes." << endl;
+}
 
 // Traz data e hora
 string get_timestamp() {
@@ -43,23 +59,32 @@ string get_timestamp() {
     return string(buffer);
 }
 
-// Inicializa as variáveis locais, cria as 4 threads Leitura, Log, Envio, Interface e espera elas terminarem
+// TAREFA PRINCIPAL
 void tarefa_coletor_dados(Buffer_Circular* buffer,
                           atomic<bool>& running,
                           int id_caminhao,
                           int &leitor_coletor_dados,
                           int &leitor_interface_local) {
 
-    cout << "[Coletor Dados] Tarefa iniciada. Monitorando..." << endl;
+    // Garante que os vetores sejam criados apenas na primeira vez que rodar
+    std::call_once(flag_init_sinc, inicializar_sincronizacao);
 
-    // Variáveis de Estado (Lidas do Buffer p/ Log)
+    // Validação de segurança
+    if (id_caminhao < 0 || id_caminhao >= NUM_CAMINHOES) {
+        cerr << "[Erro] ID Caminhao " << id_caminhao << " invalido (max " << NUM_CAMINHOES-1 << ")" << endl;
+        return;
+    }
+
+    cout << "[Coletor " << id_caminhao << "] Tarefa iniciada." << endl;
+
+    // Variáveis Locais (Estado)
     float pos_x = 0.0f;
     float pos_y = 0.0f;
     float angulo = 0.0f;
     bool  modo_auto_lido = false;
     bool  defeito_lido   = false;
 
-    // Variáveis de Comando (Escritas no Buffer p/ Controle)
+    // Variáveis Locais (Comando)
     bool  automatico = false;   
     int   contador_rearme = 0;
     int   cmd_acel = 0;
@@ -67,11 +92,12 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
     bool  cmd_acel_pendente = false;
     bool  cmd_dir_pendente  = false;
 
-    // 1. Thread Lê sensores do buffer (CONSUMIDOR)
+    // 1. Thread Leitura
     thread t_leitura(
         thread_leitura_sensores,
         buffer,
         ref(running),
+        id_caminhao,
         ref(pos_x),
         ref(pos_y),
         ref(angulo),
@@ -79,7 +105,7 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
         ref(defeito_lido)
     );
 
-    // 2. Thread Grava em arquivo/Interface (LOGGER)
+    // 2. Thread Logger
     thread t_armazena_log(
         thread_armazena,
         ref(running),
@@ -92,11 +118,12 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
         ref(leitor_interface_local)
     );
 
-    // 3. Thread Envia comandos para o buffer (PRODUTOR - Loop Contínuo)
+    // 3. Thread Envio (Produtor)
     thread t_envia(
         thread_envia_buffer,
         buffer,
         ref(running),
+        id_caminhao,
         ref(automatico),
         ref(contador_rearme),
         ref(cmd_acel),
@@ -105,10 +132,11 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
         ref(cmd_dir_pendente)
     );
 
-    // 4. Thread Interface: Escuta o usuário
+    // 4. Thread Interface (Recebe)
     thread t_recebe(
         thread_recebe_pipe,
         ref(running),
+        id_caminhao,
         ref(leitor_coletor_dados),
         ref(automatico),
         ref(contador_rearme),
@@ -123,15 +151,12 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
     t_envia.join();
     t_recebe.join();
 
-    cout << "[Coletor Dados] Tarefa terminada." << endl;
+    cout << "[Coletor " << id_caminhao << "] Encerrado." << endl;
 }
 
-// Lê continuamente do buffer original
-void thread_leitura_sensores(Buffer_Circular* buffer, atomic<bool>& running, float &pos_x, float &pos_y, float &angulo, bool &modo_auto, bool &defeito) {
+void thread_leitura_sensores(Buffer_Circular* buffer, atomic<bool>& running, int id, float &pos_x, float &pos_y, float &angulo, bool &modo_auto, bool &defeito) {
     while (running) {
-        // Os métodos do buffer original (consumidor_i/b) já usam semáforos C++20 internamente
-        // para bloquear se não houver dados. Isso está correto.
-        
+
         pos_x = buffer->consumidor_i(ID_I_POS_X, ID_TAREFA_COLETOR);
         pos_y = buffer->consumidor_i(ID_I_POS_Y, ID_TAREFA_COLETOR);
         angulo = buffer->consumidor_i(ID_I_ANG_X, ID_TAREFA_COLETOR);
@@ -139,17 +164,17 @@ void thread_leitura_sensores(Buffer_Circular* buffer, atomic<bool>& running, flo
         modo_auto = buffer->consumidor_b(ID_E_AUTOMATICO, ID_TAREFA_COLETOR);
         defeito   = buffer->consumidor_b(ID_E_DEFEITO,    ID_TAREFA_COLETOR);
 
-        // Avisa a thread de log 
-        sem_novos_dados.release();
+        // Libera o semáforo específico deste caminhão
+        sem_novos_dados_vec[id]->release();
     }
 }
 
-// Logger - Escreve quando recebe sinal
 void thread_armazena(atomic<bool>& running, int id_caminhao, float &pos_x, float &pos_y, float &angulo, bool &modo_auto, bool &defeito, int &leitor_interface_local) {
     const string nome_arquivo = "log_caminhao_" + to_string(id_caminhao) + ".txt";
 
     while (running) {
-        sem_wait(&sem_novos_dados);
+        // Espera no semáforo específico do vetor
+        sem_novos_dados_vec[id_caminhao]->acquire();
 
         string estado_str  = (modo_auto ? "AUTOMATICO" : "MANUAL");
         string defeito_str = (defeito   ? "COM_DEFEITO" : "NORMAL");
@@ -161,16 +186,14 @@ void thread_armazena(atomic<bool>& running, int id_caminhao, float &pos_x, float
                      + " | POS: (" + to_string(pos_x) + ", " + to_string(pos_y) + ")"
                      + " | ANG: " + to_string(angulo) + "\n";
 
-        // Envia para pipe
         write(leitor_interface_local, msg.c_str(), msg.size());
 
-        // Grava em arquivo
-        {ofstream arq(nome_arquivo, ios::app);
-        if (arq.is_open()) {
-            arq << msg;
-            arq.close();
+        {
+            ofstream arq(nome_arquivo, ios::app);
+            if (arq.is_open()) { arq << msg; arq.close(); }
         }
         
+        // Logs de falhas globais 
         {
             lock_guard<mutex> lock(mtx_falha_eletrica);
             if (falha_eletrica_global) {
@@ -181,114 +204,56 @@ void thread_armazena(atomic<bool>& running, int id_caminhao, float &pos_x, float
     }
 }
 
-// Produtor - Envia comandos para o buffer
-void thread_envia_buffer(Buffer_Circular* buffer,
-                         atomic<bool>& running,
-                         bool &automatico,
-                         int &contador_rearme,
-                         int &cmd_acel,
-                         int &cmd_dir,
-                         bool &cmd_acel_pendente,
-                         bool &cmd_dir_pendente) {
-
+void thread_envia_buffer(Buffer_Circular* buffer, atomic<bool>& running, int id, bool &automatico, int &contador_rearme, int &cmd_acel, int &cmd_dir, bool &cmd_acel_pendente, bool &cmd_dir_pendente) {
     while (running) {
         bool auto_local, manual_local, rearme_local = false;
         int acel_local = 0, dir_local = 0;
         bool enviar_acel = false, enviar_dir = false;
         
-        // Copia dados protegidos
         {
-            lock_guard<mutex> lock(mtx_dados_cmd);
+            // Usa o mutex específico do vetor
+            lock_guard<mutex> lock(*mtx_dados_cmd_vec[id]);
             
             auto_local = automatico;
             manual_local = !automatico;
-
-            if (contador_rearme > 0) {
-                rearme_local = true;
-                contador_rearme = 0; 
-            }
-            
-            if (cmd_acel_pendente) {
-                acel_local = cmd_acel;
-                enviar_acel = true;
-                cmd_acel_pendente = false;
-            }
-            
-            if (cmd_dir_pendente) {
-                dir_local = cmd_dir;
-                enviar_dir = true;
-                cmd_dir_pendente = false;
-            }
+            if (contador_rearme > 0) { rearme_local = true; contador_rearme = 0; }
+            if (cmd_acel_pendente) { acel_local = cmd_acel; enviar_acel = true; cmd_acel_pendente = false; }
+            if (cmd_dir_pendente) { dir_local = cmd_dir; enviar_dir = true; cmd_dir_pendente = false; }
         }
-        
-        // Escreve no buffer original
+
         buffer->produtor_b(auto_local,   ID_C_AUTOMATICO);
         buffer->produtor_b(manual_local, ID_C_MANUAL);
         buffer->produtor_b(rearme_local, ID_C_REARME);
         
-        if (enviar_acel) {
-            buffer->produtor_i((float)acel_local, ID_C_ACELERA);
-        }
-        
+        if (enviar_acel) buffer->produtor_i((float)acel_local, ID_C_ACELERA);
         if (enviar_dir) {
             if (dir_local > 0) { 
-                buffer->produtor_i((float)dir_local, ID_C_DIREITA);
-                buffer->produtor_i(0.0f, ID_C_ESQUERDA);
+                buffer->produtor_i((float)dir_local, ID_C_DIREITA); buffer->produtor_i(0.0f, ID_C_ESQUERDA);
             } else {
-                buffer->produtor_i((float)(-dir_local), ID_C_ESQUERDA); 
-                buffer->produtor_i(0.0f, ID_C_DIREITA);
+                buffer->produtor_i((float)(-dir_local), ID_C_ESQUERDA); buffer->produtor_i(0.0f, ID_C_DIREITA);
             }
         }
-        
         std::this_thread::yield(); 
     }
 }
 
-// Interface com usuário (Pipe)
-void thread_recebe_pipe(atomic<bool>& running,
-                        int &leitor_coletor_dados,
-                        bool &automatico,
-                        int &contador_rearme,
-                        int &cmd_acel,
-                        int &cmd_dir,
-                        bool &cmd_acel_pendente,
-                        bool &cmd_dir_pendente) {
-
+void thread_recebe_pipe(atomic<bool>& running, int id, int &leitor_coletor_dados, bool &automatico, int &contador_rearme, int &cmd_acel, int &cmd_dir, bool &cmd_acel_pendente, bool &cmd_dir_pendente) {
     char buff[256];
     while (running) {
-        // Bloqueia aqui
         ssize_t n = read(leitor_coletor_dados, buff, sizeof(buff) - 1);
-        
         if (n > 0) {
             buff[n] = '\0';
+            
+            // Usa o mutex específico do vetor
+            lock_guard<mutex> lock(*mtx_dados_cmd_vec[id]);
 
-            lock_guard<mutex> lock(mtx_dados_cmd);
-
-            if (strncmp(buff, "automatico", 10) == 0) {
-                automatico = true;
-            }
-            else if (strncmp(buff, "manual", 6) == 0) {
-                automatico = false;
-            }
-            else if (strncmp(buff, "rearme", 6) == 0) {
-                contador_rearme = 1;
-            }
-            else if (strncmp(buff, "acel_pos", 8) == 0) {
-                cmd_acel = 10;
-                cmd_acel_pendente = true;
-            }
-            else if (strncmp(buff, "acel_neg", 8) == 0) {
-                cmd_acel = -10;              
-                cmd_acel_pendente = true;
-            }
-            else if (strncmp(buff, "dir_dir", 7) == 0) {
-                cmd_dir = 10;                
-                cmd_dir_pendente = true;
-            }
-            else if (strncmp(buff, "dir_esq", 7) == 0) {
-                cmd_dir = -10;             
-                cmd_dir_pendente = true;
-            }
+            if (strncmp(buff, "automatico", 10) == 0) automatico = true;
+            else if (strncmp(buff, "manual", 6) == 0) automatico = false;
+            else if (strncmp(buff, "rearme", 6) == 0) contador_rearme = 1;
+            else if (strncmp(buff, "acel_pos", 8) == 0) { cmd_acel = 10; cmd_acel_pendente = true; }
+            else if (strncmp(buff, "acel_neg", 8) == 0) { cmd_acel = -10; cmd_acel_pendente = true; }
+            else if (strncmp(buff, "dir_dir", 7) == 0) { cmd_dir = 10; cmd_dir_pendente = true; }
+            else if (strncmp(buff, "dir_esq", 7) == 0) { cmd_dir = -10; cmd_dir_pendente = true; }
         }
     }
 }
