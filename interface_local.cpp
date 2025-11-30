@@ -1,172 +1,206 @@
 #include "interface_local.h"
-#include "coletor_dados.h"
-#include "monitoramento_de_falhas.h"
-#include "logica_comando.h"
-#include "variaveis.h"
+
 #include <iostream>
 #include <thread>
 #include <string>
-#include <unistd.h>
+#include <unistd.h> 
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <mutex>
+#include <cmath>     
+#include <algorithm>  
+#include <cstring>    
 
 using namespace std;
 
-void tarefa_interface_local(Buffer_Circular* buffer, atomic<bool>& running, int &leitor_coletor_dados, int &leitor_interface_local) {
-    int envio_cmd = 0;
+// Estas variáveis guardam o último estado conhecido recebido do Coletor.
+float local_pos_x = 0.0f;
+float local_pos_y = 0.0f;
+float local_angulo = 0.0f;
+string local_estado = "DESCONHECIDO";
+string local_status = "DESCONHECIDO";
+
+// Mutex para proteger o acesso a essas variáveis
+mutex mtx_dados_locais;
+
+// Limites do Mapa
+const float MAX_X = 100.0f;
+const float MAX_Y = 100.0f;
+const float MIN_VAL = 0.0f;
+
+// Mantém ângulo entre 0 e 360
+void normalizar_angulo(float &angulo) {
+    angulo = fmod(angulo, 360.0f);
+    if (angulo < 0) angulo += 360.0f;
+}
+
+// Mantém posição dentro do mapa
+void limitar_posicao(float &x, float &y) {
+    x = std::clamp(x, MIN_VAL, MAX_X);
+    y = std::clamp(y, MIN_VAL, MAX_Y);
+}
+
+// Função simples para extrair valores do log
+void parse_mensagem_log(string msg) {
+    lock_guard<mutex> lock(mtx_dados_locais);
+    
+    
+    // 1. Extrair Estado
+    if (msg.find("ESTADO: AUTOMATICO") != string::npos) local_estado = "AUTOMATICO";
+    else if (msg.find("ESTADO: MANUAL") != string::npos) local_estado = "MANUAL";
+    
+    // 2. Extrair Status
+    if (msg.find("STATUS: NORMAL") != string::npos) local_status = "NORMAL";
+    else if (msg.find("STATUS: COM_DEFEITO") != string::npos) local_status = "DEFEITO";
+
+    // 3. Extrair Posição
+    size_t pos_start = msg.find("POS: (");
+    if (pos_start != string::npos) {
+        size_t start_num = pos_start + 6; 
+        size_t comma = msg.find(",", start_num);
+        size_t end_num = msg.find(")", comma);
+        
+        if (comma != string::npos && end_num != string::npos) {
+            try {
+                string s_x = msg.substr(start_num, comma - start_num);
+                string s_y = msg.substr(comma + 1, end_num - (comma + 1));
+                
+                float x = stof(s_x);
+                float y = stof(s_y);
+                
+                limitar_posicao(x, y);
+                
+                local_pos_x = x;
+                local_pos_y = y;
+                
+                // Se o coletor passar a enviar angulo, adicione aqui.
+
+            } catch (...) {
+            }
+        }
+    }
+}
+
+void tarefa_interface_local(Buffer_Circular* buffer,
+                            atomic<bool>& running,
+                            int &leitor_coletor_dados,
+                            int &leitor_interface_local) {
+    
+    int envio_cmd = 0; 
     mutex mtx_envio_cmd;
 
-    cout << "[Interface Local] Tarefa iniciada. Para enviar comandos, a qualquer momento digite 'a' (Auto), 'm' (Manual), 'r' (Rearme) e pressione Enter:" << endl;
-    // Threads para cada sensor
-    thread t_recebe_cmd(thread_recebe_cmd, ref(buffer), ref(running), ref(leitor_coletor_dados), ref(envio_cmd), ref(mtx_envio_cmd)); 
-    thread t_exibe_msg(thread_exibe_msg, ref(buffer), ref(running), ref(leitor_interface_local), ref(envio_cmd), ref(mtx_envio_cmd)); 
+    cout << "[Interface Local] Tarefa iniciada.\n";
+    cout << "-------------------------------------------------\n";
+    cout << "  COMANDOS DE CONTROLE: \n";
+    cout << "  a = Automatico | m = Manual | r = Rearme\n";
+    cout << "  w/s = Acelerar/Frear | d/e = Dir/Esq\n";
+    cout << "-------------------------------------------------\n";
+    cout << "  VISUALIZACAO: \n";
+    cout << "  p = Imprimir Status Atual (Sob Demanda)\n";
+    cout << "-------------------------------------------------\n";
 
-    // Espera todas terminarem
+    // Thread 1: Lê teclado
+    thread t_recebe_cmd(
+        thread_recebe_cmd,
+        buffer,
+        ref(running),
+        ref(leitor_coletor_dados),
+        ref(envio_cmd),
+        ref(mtx_envio_cmd)
+    );
+
+    // Thread 2: Lê pipe do coletor em background
+    thread t_exibe_msg(
+        thread_exibe_msg,
+        buffer,
+        ref(running),
+        ref(leitor_interface_local),
+        ref(envio_cmd),
+        ref(mtx_envio_cmd)
+    );
+
     t_recebe_cmd.join();
     t_exibe_msg.join();
 
     cout << "[Interface Local] Tarefa terminada." << endl;
-};
+}
 
-void thread_recebe_cmd(Buffer_Circular* buffer, atomic<bool>& running, int &leitor_coletor_dados, int &envio_cmd, mutex &mtx_envio_cmd) {
+void thread_recebe_cmd(Buffer_Circular* /*buffer*/,
+                       atomic<bool>& running,
+                       int &leitor_coletor_dados,
+                       int &envio_cmd,
+                       mutex &mtx_envio_cmd) {
     char comando;
     string msg;
 
-            while(running && cin >> comando){
-                mtx_envio_cmd.lock();
-                envio_cmd = 1;
-                mtx_envio_cmd.unlock();
-                if (!running) break;
-                        // Este loop le entradas do usuário                
-                switch(comando) {
-                    case 'a':{
-                        // Produz o COMANDO para o modo automático
-                        msg = "automatico";
-                        ssize_t w = write(leitor_coletor_dados, msg.c_str(), msg.size());
-                        cout << "[Interface Local] MODO AUTOMÁTICO enviado." << endl;
-                        cout << "Para enviar comandos, a qualquer momento digite 'a' (Auto), 'm' (Manual), 'r' (Rearme) e pressione Enter:" << endl;
-                        envio_cmd = 0;
-                        break;
-                    }
-                    case 'm':{
-                        // Produz o COMANDO para o modo manual
-                        msg = "manual";
-                        ssize_t w = write(leitor_coletor_dados, msg.c_str(), msg.size());
-                        cout << "[Interface Local] MODO MANUAL enviado." << endl;
-                        cout << "Para enviar comandos, a qualquer momento digite 'a' (Auto), 'm' (Manual), 'r' (Rearme) e pressione Enter:." << endl;
-                        envio_cmd = 0;
-                        break;
-                    }
-                    case 'r':{
-                        // Produz o COMANDO de rearme
-                        msg = "rearme";
-                        ssize_t w = write(leitor_coletor_dados, msg.c_str(), msg.size());
-                        cout << "[Interface Local] REARME DE FALHA enviado." << endl;
-                        cout << "Para enviar comandos, a qualquer momento digite 'a' (Auto), 'm' (Manual), 'r' (Rearme) e pressione Enter:" << endl;
-                        envio_cmd = 0;
-                        break;
-                    }
-                    default:
-                    cout << "[Interface Local] Comando '" << comando << "' desconhecido." << endl;
-                    cout << "Para enviar comandos, a qualquer momento digite 'a' (Auto), 'm' (Manual), 'r' (Rearme) e pressione Enter:" << endl;
-                    envio_cmd = 0;
-                
-            }
+    while (running) {
+        cout << "> "; // Prompt
+        cin >> comando;
 
+        if (!running) break;
 
+        // --- COMANDO DE VISUALIZAÇÃO ---
+        if (comando == 'p' || comando == 'P') {
+            // Acessa a memória local protegida e imprime
+            lock_guard<mutex> lock(mtx_dados_locais);
+            
+            cout << "\n=== STATUS DO SISTEMA ===" << endl;
+            cout << "Estado Operacional: " << local_estado << endl;
+            cout << "Status de Falha:    " << local_status << endl;
+            cout << "Posicao Atual:      (" << local_pos_x << ", " << local_pos_y << ")" << endl;
+            cout << "Angulo (Norte=0):   " << local_angulo << " graus" << endl;
+            cout << "=========================\n" << endl;
+            
+            continue; // Volta para o loop, não envia nada pro pipe
         }
-};  
 
+        bool comando_valido = true;
+        switch (comando) {
+            case 'a': msg = "automatico"; break;
+            case 'm': msg = "manual"; break;
+            case 'r': msg = "rearme"; break;
+            case 'w': msg = "acel_pos"; break;
+            case 's': msg = "acel_neg"; break;
+            case 'd': msg = "dir_dir"; break;
+            case 'e': msg = "dir_esq"; break;
+            default:
+                cout << "[Interface] Comando invalido. Use 'p' para status.\n";
+                comando_valido = false;
+        }
 
-void thread_exibe_msg(Buffer_Circular* buffer, atomic<bool>& running, int &leitor_interface_local, int &envio_cmd,  mutex &mtx_envio_cmd) {
-
-    char buff[256];
-    while(running){
-        mtx_envio_cmd.lock();
-        if(envio_cmd == 0){
-            mtx_envio_cmd.unlock();
-            ssize_t n = read(leitor_interface_local, buff, sizeof(buff)-1);
-            if (n <= 0) break;
-            buff[n] = '\0';
-            cout << "ESTADO CAMINHÕES DA MINA: " << buff << endl;
-            this_thread::sleep_for(chrono::seconds(2));
-        }else {
-            mtx_envio_cmd.unlock();
+        if (comando_valido) {
+            write(leitor_coletor_dados, msg.c_str(), msg.size());
+            cout << "[Interface] Comando enviado: " << msg << endl;
         }
     }
-};
-
-/*int main(){
-
-int leitor_coletor_dados[2];
-int leitor_interface_local[2];
-
-Buffer_Circular buffer;
-std::atomic<bool> running(true);
-
-if (pipe(leitor_coletor_dados) < 0) {
-    perror("pipe");
-    exit(1);
-}
-if (pipe(leitor_interface_local) < 0) {
-    perror("pipe");
-    exit(1);
 }
 
-int flags;
-flags = fcntl(leitor_coletor_dados[0], F_GETFL, 0);
-fcntl(leitor_coletor_dados[0], F_SETFL, flags | O_NONBLOCK);
 
-flags = fcntl(leitor_interface_local[0], F_GETFL, 0);
-fcntl(leitor_interface_local[0], F_SETFL, flags | O_NONBLOCK);
+void thread_exibe_msg(Buffer_Circular* /*buffer*/,
+                      atomic<bool>& running,
+                      int &leitor_interface_local,
+                      int &envio_cmd,
+                      mutex &mtx_envio_cmd) {
 
+    char buff[512]; 
 
-std::thread t_coletor([&]() {
-    tarefa_coletor_dados(&buffer, running, 1, leitor_coletor_dados[0], leitor_interface_local[1]);
-});
+    while (running) {
+        // Lê do pipe (bloqueante, eficiente)
+        ssize_t n = read(leitor_interface_local, buff, sizeof(buff) - 1);
+        
+        if (n > 0) {
+            buff[n] = '\0';
+            string mensagem_recebida(buff);
 
-std::thread t_interface([&]() {
-    tarefa_interface_local(&buffer, running, leitor_coletor_dados[1], leitor_interface_local[0]);
-});
- Logica_Comando logica;
-
-// Thread 1 - Monitoramento de falhas
-    std::thread t_monitor([&]() {
-        tarefa_monitoramento_falhas(&buffer, running);
-    });
-
-    // Thread 2 - Lógica de comando
-    std::thread t_logica([&]() {
-        logica.logica_comando(buffer);
-    });
-
-    // -------------------------------
-    // Simula o sistema rodando por 10 segundos
-    // -------------------------------
-    for (int i = 0; i < 70; ++i) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-
-        /*if ((i == 1)||(i == 2)||(i == 3)||(i == 4) ){
-            //buffer.produtor_b(true,10);
-            //buffer.produtor_b(false,12);
-            //buffer.consumidor_b(8,0);
-
-        } /*else if ((i == 13)||(i == 14)||(i == 15)) {
-            buffer.produtor_b(true,12);
-            buffer.produtor_b(false,10);
-            buffer.consumidor_b(8,0);
-
-        } else {
-            buffer.produtor_b(false,10);
-            buffer.produtor_b(false,12);
-            buffer.consumidor_b(8,0);
+            // Processa a mensagem para atualizar as variáveis locais
+            parse_mensagem_log(mensagem_recebida);
+            
         }
-        buffer.mostrar_buffer();
-
-
-} 
-t_coletor.join();
-t_interface.join();
-}*/
+        else {
+            // espera um pouco para não fritar CPU
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+}
