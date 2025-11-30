@@ -55,6 +55,7 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
     // Variáveis de Estado (Lidas do Buffer p/ Log)
     float pos_x = 0.0f;
     float pos_y = 0.0f;
+    float angulo = 0.0f;
     bool  modo_auto_lido = false;
     bool  defeito_lido   = false;
 
@@ -73,6 +74,7 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
         ref(running),
         ref(pos_x),
         ref(pos_y),
+        ref(angulo),
         ref(modo_auto_lido),
         ref(defeito_lido)
     );
@@ -84,6 +86,7 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
         id_caminhao,
         ref(pos_x),
         ref(pos_y),
+        ref(angulo),
         ref(modo_auto_lido),
         ref(defeito_lido),
         ref(leitor_interface_local)
@@ -123,19 +126,16 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
     cout << "[Coletor Dados] Tarefa terminada." << endl;
 }
 
-// ============================================================================
-// THREADS AUXILIARES
-// ============================================================================
-
 // Lê continuamente do buffer original
-void thread_leitura_sensores(Buffer_Circular* buffer, atomic<bool>& running, float &pos_x, float &pos_y, bool &modo_auto, bool &defeito) {
+void thread_leitura_sensores(Buffer_Circular* buffer, atomic<bool>& running, float &pos_x, float &pos_y, float &angulo, bool &modo_auto, bool &defeito) {
     while (running) {
         // Os métodos do buffer original (consumidor_i/b) já usam semáforos C++20 internamente
         // para bloquear se não houver dados. Isso está correto.
         
         pos_x = buffer->consumidor_i(ID_I_POS_X, ID_TAREFA_COLETOR);
         pos_y = buffer->consumidor_i(ID_I_POS_Y, ID_TAREFA_COLETOR);
-        
+        angulo = buffer->consumidor_i(ID_I_ANG_X, ID_TAREFA_COLETOR);
+
         modo_auto = buffer->consumidor_b(ID_E_AUTOMATICO, ID_TAREFA_COLETOR);
         defeito   = buffer->consumidor_b(ID_E_DEFEITO,    ID_TAREFA_COLETOR);
 
@@ -145,19 +145,11 @@ void thread_leitura_sensores(Buffer_Circular* buffer, atomic<bool>& running, flo
 }
 
 // Logger - Escreve quando recebe sinal
-void thread_armazena(atomic<bool>& running,
-                     int id_caminhao,
-                     float &pos_x,
-                     float &pos_y,
-                     bool &modo_auto,
-                     bool &defeito,
-                     int &leitor_interface_local) {
-
-    const std::string nome_arquivo = "log_caminhao_" + std::to_string(id_caminhao) + ".txt";
+void thread_armazena(atomic<bool>& running, int id_caminhao, float &pos_x, float &pos_y, float &angulo, bool &modo_auto, bool &defeito, int &leitor_interface_local) {
+    const string nome_arquivo = "log_caminhao_" + to_string(id_caminhao) + ".txt";
 
     while (running) {
-        // Espera passivamente 
-        sem_novos_dados.acquire();
+        sem_wait(&sem_novos_dados);
 
         string estado_str  = (modo_auto ? "AUTOMATICO" : "MANUAL");
         string defeito_str = (defeito   ? "COM_DEFEITO" : "NORMAL");
@@ -166,18 +158,19 @@ void thread_armazena(atomic<bool>& running,
                      + " | CAMINHAO_" + to_string(id_caminhao)
                      + " | ESTADO: " + estado_str
                      + " | STATUS: " + defeito_str
-                     + " | POS: (" + to_string(pos_x) + ", " + to_string(pos_y) + ")\n";
+                     + " | POS: (" + to_string(pos_x) + ", " + to_string(pos_y) + ")"
+                     + " | ANG: " + to_string(angulo) + "\n";
 
         // Envia para pipe
         write(leitor_interface_local, msg.c_str(), msg.size());
 
         // Grava em arquivo
-        {
-            ofstream arq(nome_arquivo, ios::app);
-            if (arq.is_open()) arq << msg;
+        {ofstream arq(nome_arquivo, ios::app);
+        if (arq.is_open()) {
+            arq << msg;
+            arq.close();
         }
         
-        // Verifica falhas globais (usando mutexes definidos em variaveis.h)
         {
             lock_guard<mutex> lock(mtx_falha_eletrica);
             if (falha_eletrica_global) {
@@ -185,7 +178,6 @@ void thread_armazena(atomic<bool>& running,
                 write(leitor_interface_local, msg1.c_str(), msg1.size());
             }
         }
-        // (Adicionar os outros if's de falha aqui conforme seu código original)
     }
 }
 

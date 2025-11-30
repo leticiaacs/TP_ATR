@@ -1,4 +1,6 @@
 #include "interface_local.h"
+#include "coletor_dados.h"
+#include "variaveis.h"
 
 #include <iostream>
 #include <thread>
@@ -77,9 +79,26 @@ void parse_mensagem_log(string msg) {
                 
                 // Se o coletor passar a enviar angulo, adicione aqui.
 
-            } catch (...) {
-            }
+            } catch (...) {}
         }
+    }
+    // 4. Extrair Ângulo (NOVO)
+    // Procura pela string " | ANG: "
+    size_t ang_start = msg.find("ANG: ");
+    if (ang_start != string::npos) {
+        try {
+            // O número começa logo depois de "ANG: " (5 chars)
+            size_t start_num = ang_start + 5;
+            // Vai até o fim da linha ou próximo pipe (no nosso caso é fim da linha \n)
+            string s_ang = msg.substr(start_num);
+            
+            float ang = stof(s_ang);
+            
+            // Corrige erro de "virar infinito"
+            normalizar_angulo(ang);
+            
+            local_angulo = ang;
+        } catch (...) {}
     }
 }
 
