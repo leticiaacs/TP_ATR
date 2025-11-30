@@ -25,8 +25,6 @@ using namespace std;
 
 #define ID_TAREFA_COLETOR 1
 
-// Vetor de Semáforos (um para cada caminhão)
-static vector<unique_ptr<std::counting_semaphore<1024>>> sem_novos_dados_vec;
 
 // Vetor de Mutexes (um para cada caminhão)
 static vector<unique_ptr<std::mutex>> mtx_dados_cmd_vec;
@@ -36,12 +34,9 @@ static std::once_flag flag_init_sinc;
 
 // Função para inicializar os vetores de sincronização
 void inicializar_sincronizacao() {
-    sem_novos_dados_vec.clear();
     mtx_dados_cmd_vec.clear();
     
     for(int i = 0; i < NUM_CAMINHOES; i++) {
-        // Cria semáforo inicializado com 0
-        sem_novos_dados_vec.push_back(make_unique<std::counting_semaphore<1024>>(0));
         // Cria mutex
         mtx_dados_cmd_vec.push_back(make_unique<std::mutex>());
     }
@@ -69,15 +64,16 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
     // Garante que os vetores sejam criados apenas na primeira vez que rodar
     std::call_once(flag_init_sinc, inicializar_sincronizacao);
 
-    // Validação de segurança
     if (id_caminhao < 0 || id_caminhao >= NUM_CAMINHOES) {
-        cerr << "[Erro] ID Caminhao " << id_caminhao << " invalido (max " << NUM_CAMINHOES-1 << ")" << endl;
+        cerr << "[Erro] ID Caminhao " << id_caminhao << " invalido." << endl;
         return;
     }
 
     cout << "[Coletor " << id_caminhao << "] Tarefa iniciada." << endl;
 
     // Variáveis Locais (Estado)
+    // Precisam ser mantidas vivas enquanto as threads rodarem
+    // Como esta função 'tarefa_coletor_dados' bloqueia no join() final, as variáveis locais são seguras.
     float pos_x = 0.0f;
     float pos_y = 0.0f;
     float angulo = 0.0f;
@@ -91,20 +87,43 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
     int   cmd_dir  = 0;
     bool  cmd_acel_pendente = false;
     bool  cmd_dir_pendente  = false;
-
     // 1. Thread Leitura
-    thread t_leitura(
+    thread t_leitura_posx(
         thread_leitura_sensores,
         buffer,
         ref(running),
         id_caminhao,
         ref(pos_x),
-        ref(pos_y),
-        ref(angulo),
-        ref(modo_auto_lido),
-        ref(defeito_lido)
     );
 
+      thread t_leitura_posy(
+        thread_leitura_sensores,
+        buffer,
+        ref(running),
+        id_caminhao,
+        ref(pos_y),
+    );
+      thread t_leitura_ang(
+        thread_leitura_sensores,
+        buffer,
+        ref(running),
+        id_caminhao,
+        ref(angulo),
+    );
+      thread t_leitura_modo_auto(
+        thread_leitura_sensores,
+        buffer,
+        ref(running),
+        id_caminhao,
+        ref(modo_auto_lido),
+    );
+      thread t_leitura_defeito(
+        thread_leitura_sensores,
+        buffer,
+        ref(running),
+        id_caminhao,
+        ref(defeito_lido)
+    );
     // 2. Thread Logger
     thread t_armazena_log(
         thread_armazena,
@@ -146,7 +165,11 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
         ref(cmd_dir_pendente)
     );
 
-    t_leitura.join();
+    t_leitura_posx.join();
+    t_leitura_posy.join();
+    t_leitura_ang.join();
+    t_leitura_modo_auto.join();
+    t_leitura_defeito.join();
     t_armazena_log.join();
     t_envia.join();
     t_recebe.join();
@@ -154,18 +177,38 @@ void tarefa_coletor_dados(Buffer_Circular* buffer,
     cout << "[Coletor " << id_caminhao << "] Encerrado." << endl;
 }
 
-void thread_leitura_sensores(Buffer_Circular* buffer, atomic<bool>& running, int id, float &pos_x, float &pos_y, float &angulo, bool &modo_auto, bool &defeito) {
+void thread_leitura_sensores_posx(Buffer_Circular* buffer, atomic<bool>& running, int id, float &pos_x) {
     while (running) {
 
         pos_x = buffer->consumidor_i(ID_I_POS_X, ID_TAREFA_COLETOR);
+
+    }
+}
+
+void thread_leitura_sensores_posx(Buffer_Circular* buffer, atomic<bool>& running, int id, float &pos_y) {
+    while(running){
         pos_y = buffer->consumidor_i(ID_I_POS_Y, ID_TAREFA_COLETOR);
+
+    }
+}
+
+void thread_leitura_sensores_posx(Buffer_Circular* buffer, atomic<bool>& running, int id, float &angulo) {
+    while(running){
         angulo = buffer->consumidor_i(ID_I_ANG_X, ID_TAREFA_COLETOR);
 
-        modo_auto = buffer->consumidor_b(ID_E_AUTOMATICO, ID_TAREFA_COLETOR);
-        defeito   = buffer->consumidor_b(ID_E_DEFEITO,    ID_TAREFA_COLETOR);
+    }
+}
 
-        // Libera o semáforo específico deste caminhão
-        sem_novos_dados_vec[id]->release();
+void thread_leitura_sensores_posx(Buffer_Circular* buffer, atomic<bool>& running, int id, bool &modo_auto) {
+    while(running){
+        modo_auto = buffer->consumidor_b(ID_E_AUTOMATICO, ID_TAREFA_COLETOR);
+
+    }
+}
+
+void thread_leitura_sensores_posx(Buffer_Circular* buffer, atomic<bool>& running, int id, bool &defeito) {
+    while(running){
+        defeito   = buffer->consumidor_b(ID_E_DEFEITO,    ID_TAREFA_COLETOR);
     }
 }
 
@@ -173,8 +216,6 @@ void thread_armazena(atomic<bool>& running, int id_caminhao, float &pos_x, float
     const string nome_arquivo = "log_caminhao_" + to_string(id_caminhao) + ".txt";
 
     while (running) {
-        // Espera no semáforo específico do vetor
-        sem_novos_dados_vec[id_caminhao]->acquire();
 
         string estado_str  = (modo_auto ? "AUTOMATICO" : "MANUAL");
         string defeito_str = (defeito   ? "COM_DEFEITO" : "NORMAL");
